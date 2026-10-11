@@ -8,6 +8,11 @@ import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
 
+# Kiểm tra mật khẩu từ Streamlit Secrets
+password_input = st.text_input("Nhập mật khẩu truy cập ứng dụng:", type="password")
+if password_input != st.secrets["PASSWORD"]:
+  st.warning("Vui lòng nhập đúng mật khẩu để tiếp tục.")
+  st.stop()  # Dừng việc hiển thị phần còn lại của ứng dụng nếu sai mật khẩu
 # Cấu hình tiêu đề trang ứng dụng
 st.set_page_config(
     page_title="Hệ thống Hỗ trợ Chẩn đoán Nội soi Tai",
