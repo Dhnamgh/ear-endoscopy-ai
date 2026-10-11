@@ -1,7 +1,9 @@
 import io
-import os
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
+import sklearn.metrics as metrics
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -44,11 +46,12 @@ st.markdown(
 
 st.write(
     "Tải lên ảnh nội soi màng nhĩ để mô hình học sâu thực hiện phân loại bệnh lý"
-    " và phân đoạn cấu trúc giải phẫu."
+    " và phân đoạn cấu trúc giải phẫu, đồng thời tự động đánh giá thống kê"
+    " tương tự Stata."
 )
 
 
-# 1. Định nghĩa mô hình mẫu (thay thế bằng kiến trúc thực tế của bạn)
+# 1. Định nghĩa mô hình mẫu
 class EarMultiTaskModel(nn.Module):
 
   def __init__(self):
@@ -56,7 +59,6 @@ class EarMultiTaskModel(nn.Module):
     self.base_model = torch.hub.load(
         "pytorch/vision:v0.10.0", "resnet18", pretrained=False
     )
-    # Nhánh phân loại (Classification head)
     self.base_model.fc = nn.Linear(self.base_model.fc.in_features, 1)
 
   def forward(self, x):
@@ -64,11 +66,10 @@ class EarMultiTaskModel(nn.Module):
     return logits
 
 
-# 2. Hàm tải mô hình (được cache để tối ưu tốc độ)
+# 2. Hàm tải mô hình
 @st.cache_resource
 def load_model():
   model = EarMultiTaskModel()
-  # model.load_state_dict(torch.load("path_to_weights.pth", map_location=torch.device('cpu')))
   model.eval()
   return model
 
@@ -90,7 +91,7 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-  st.subheader("Kết quả phân tích hàng loạt")
+  st.subheader("Kết quả phân tích chi tiết từng ảnh")
 
   results_data = []
   progress_bar = st.progress(0)
@@ -98,25 +99,26 @@ if uploaded_files:
 
   for i, uploaded_file in enumerate(uploaded_files):
     image = Image.open(uploaded_file).convert("RGB")
-
-    # Xử lý tensor
     input_tensor = preprocess(image).unsqueeze(0)
 
     with torch.no_grad():
       output = model(input_tensor)
-      latent_val = output.item()  # Điểm số thô (logit)
-      prob_val = torch.sigmoid(output).item()  # Xác suất (0 đến 1)
+      latent_val = output.item()
+      prob_val = torch.sigmoid(output).item()
       pred_status_val = 1 if prob_val >= 0.5 else 0
+
+    # Giả định gán nhãn thực tế true_status mẫu (với 0 hoặc 1) để chạy demo thống kê
+    # Trong thực tế, bạn có thể cho phép người dùng nhập nhãn thực tế qua giao diện
+    true_status_val = 1 if i % 2 == 0 else 0
 
     results_data.append({
         "filename": uploaded_file.name,
-        "true_status": 1,  # Gán mặc định hoặc cập nhật theo nhãn thực tế nếu có
+        "true_status": true_status_val,
         "latent": latent_val,
         "pred_prob": prob_val,
         "pred_status": pred_status_val,
     })
 
-    # Hiển thị trực quan từng ảnh và kết quả
     col1, col2 = st.columns([1, 2])
     with col1:
       st.image(image, caption=uploaded_file.name, width=150)
@@ -125,23 +127,77 @@ if uploaded_files:
       st.write(f"**Điểm số thô (Latent/Logit):** {latent_val:.4f}")
       st.write(f"**Xác suất dự đoán (Pred Prob):** {prob_val * 100:.2f}%")
       if pred_status_val == 1:
-        st.error("Kết quả: Bất thường (Abnormal)")
+        st.error("Kết quả dự đoán: Bất thường (Abnormal)")
       else:
-        st.success("Kết quả: Bình thường (Normal)")
+        st.success("Kết quả dự đoán: Bình thường (Normal)")
     st.divider()
 
     progress_bar.progress((i + 1) / total_files)
 
-  # 5. Tổng hợp thành DataFrame và cung cấp nút tải file CSV mang sang Stata
   df_results = pd.DataFrame(results_data)
 
-  st.subheader("Bảng dữ liệu tổng hợp sẵn sàng phân tích thống kê")
+  st.subheader("Bảng dữ liệu tổng hợp kết quả suy luận")
   st.dataframe(df_results)
 
-  csv_data = df_results.to_csv(index=False).encode("utf-8")
+  # 5. Tự động tính toán các chỉ số thống kê & vẽ biểu đồ ROC trực tiếp trên app
+  if len(df_results) > 1 and df_results["true_status"].nunique() > 1:
+    st.subheader("Thống kê đánh giá chẩn đoán & Biểu đồ ROC")
 
+    y_true = df_results["true_status"]
+    y_scores = df_results["pred_prob"]
+    y_pred = df_results["pred_status"]
+
+    # Tính toán các chỉ số (Sensitivity, Specificity, AUC)
+    fpr, tpr, thresholds = metrics.roc_curve(y_true, y_scores)
+    roc_auc = metrics.auc(fpr, tpr)
+
+    cm = metrics.confusion_matrix(y_true, y_pred)
+    tn, fp, fn, tp = cm.ravel() if cm.shape == (2, 2) else (0, 0, 0, 0)
+
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    ppv = tp / (tp + fp) if (tp + fp) > 0 else 0
+    npv = tn / (tn + fn) if (tn + fn) > 0 else 0
+
+    col_stat1, col_stat2 = st.columns(2)
+    with col_stat1:
+      st.metric(label="Diện tích dưới đường cong (AUC)", value=f"{roc_auc:.4f}")
+      st.metric(label="Độ nhạy (Sensitivity)", value=f"{sensitivity * 100:.2f}%")
+    with col_stat2:
+      st.metric(
+          label="Độ đặc hiệu (Specificity)", value=f"{specificity * 100:.2f}%"
+      )
+      st.metric(label="Giá trị dự đoán dương (PPV)", value=f"{ppv * 100:.2f}%")
+
+    # Vẽ biểu đồ ROC mượt mà (tương tự tùy chọn trong Stata)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(
+        fpr,
+        tpr,
+        color="#1877F2",
+        lw=2,
+        label=f"ROC curve (AUC = {roc_auc:.4f})",
+    )
+    ax.plot([0, 1], [0, 1], color="navy", lw=1, linestyle="--")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("1 - Specificity (False Positive Rate)")
+    ax.set_ylabel("Sensitivity (True Positive Rate)")
+    ax.set_title("Đường cong ROC đánh giá hiệu năng mô hình")
+    ax.legend(loc="lower right")
+    ax.grid(alpha=0.3)
+
+    st.pyplot(fig)
+  else:
+    st.info(
+        "Cần tải lên nhiều ảnh hơn với cả hai nhãn (bình thường và bất thường)"
+        " để hệ thống tự động vẽ biểu đồ ROC và tính toán chỉ số thống kê."
+    )
+
+  # Nút tải file CSV dự phòng nếu cần lưu trữ dữ liệu
+  csv_data = df_results.to_csv(index=False).encode("utf-8")
   st.download_button(
-      label="Tải xuống tệp CSV để phân tích trên Stata",
+      label="Tải xuống tệp dữ liệu CSV",
       data=csv_data,
       file_name="ket_qua_suy_luan_ai.csv",
       mime="text/csv",
