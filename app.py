@@ -8,18 +8,40 @@ import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
 
-# Kiểm tra mật khẩu từ Streamlit Secrets
-password_input = st.text_input("Nhập mật khẩu truy cập ứng dụng:", type="password")
-if password_input != st.secrets["PASSWORD"]:
-  st.warning("Vui lòng nhập đúng mật khẩu để tiếp tục.")
-  st.stop()  # Dừng việc hiển thị phần còn lại của ứng dụng nếu sai mật khẩu
 # Cấu hình tiêu đề trang ứng dụng
 st.set_page_config(
     page_title="Hệ thống Hỗ trợ Chẩn đoán Nội soi Tai",
     layout="wide",
 )
 
-st.title("Ứng dụng Phân tích Hình ảnh Nội soi Tai (Classification & Segmentation)")
+# Kiểm tra mật khẩu bảo vệ từ Streamlit Secrets
+password_input = st.text_input(
+    "Nhập mật khẩu truy cập ứng dụng:", type="password"
+)
+if "PASSWORD" in st.secrets:
+  if password_input != st.secrets["PASSWORD"]:
+    st.warning("Vui lòng nhập đúng mật khẩu để tiếp tục sử dụng hệ thống.")
+    st.stop()
+else:
+  st.warning("Chưa cấu hình mật khẩu trong Streamlit Secrets.")
+  st.stop()
+
+# Tiêu đề tùy chỉnh kiểu dáng (Font Times New Roman, cỡ chữ 15pt tương đương 20px, màu Xanh Facebook)
+st.markdown(
+    """
+    <h3 style="
+        font-family: 'Times New Roman', Times, serif; 
+        font-size: 20px; 
+        color: #1877F2; 
+        font-weight: bold;
+        margin-bottom: 8px;
+    ">
+        Ứng dụng Phân tích Hình ảnh Nội soi Tai (Classification & Segmentation)
+    </h3>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.write(
     "Tải lên ảnh nội soi màng nhĩ để mô hình học sâu thực hiện phân loại bệnh lý"
     " và phân đoạn cấu trúc giải phẫu."
@@ -31,7 +53,6 @@ class EarMultiTaskModel(nn.Module):
 
   def __init__(self):
     super(EarMultiTaskModel, self).__init__()
-    # Ví dụ sử dụng backbone đơn giản cho demo
     self.base_model = torch.hub.load(
         "pytorch/vision:v0.10.0", "resnet18", pretrained=False
     )
@@ -39,16 +60,14 @@ class EarMultiTaskModel(nn.Module):
     self.base_model.fc = nn.Linear(self.base_model.fc.in_features, 1)
 
   def forward(self, x):
-    # Trả về logits cho nhánh phân loại
     logits = self.base_model(x)
     return logits
 
 
-# 2. Hàm tải mô hình (được cache để tối ưu tốc độ trên Streamlit)
+# 2. Hàm tải mô hình (được cache để tối ưu tốc độ)
 @st.cache_resource
 def load_model():
   model = EarMultiTaskModel()
-  # Nếu bạn có file trọng số đã huấn luyện, hãy nạp vào đây:
   # model.load_state_dict(torch.load("path_to_weights.pth", map_location=torch.device('cpu')))
   model.eval()
   return model
@@ -74,8 +93,6 @@ if uploaded_files:
   st.subheader("Kết quả phân tích hàng loạt")
 
   results_data = []
-
-  # Thanh tiến trình xử lý
   progress_bar = st.progress(0)
   total_files = len(uploaded_files)
 
@@ -86,22 +103,20 @@ if uploaded_files:
     input_tensor = preprocess(image).unsqueeze(0)
 
     with torch.no_grad():
-      # Dự đoán từ mô hình
       output = model(input_tensor)
       latent_val = output.item()  # Điểm số thô (logit)
       prob_val = torch.sigmoid(output).item()  # Xác suất (0 đến 1)
       pred_status_val = 1 if prob_val >= 0.5 else 0
 
-    # Lưu kết quả vào danh sách
     results_data.append({
         "filename": uploaded_file.name,
-        "true_status": 1,  # Giả định hoặc để trống nếu chưa có nhãn thực tế
+        "true_status": 1,  # Gán mặc định hoặc cập nhật theo nhãn thực tế nếu có
         "latent": latent_val,
         "pred_prob": prob_val,
         "pred_status": pred_status_val,
     })
 
-    # Hiển thị trực quan từng ảnh và kết quả ngắn gọn
+    # Hiển thị trực quan từng ảnh và kết quả
     col1, col2 = st.columns([1, 2])
     with col1:
       st.image(image, caption=uploaded_file.name, width=150)
@@ -123,7 +138,6 @@ if uploaded_files:
   st.subheader("Bảng dữ liệu tổng hợp sẵn sàng phân tích thống kê")
   st.dataframe(df_results)
 
-  # Chuyển đổi DataFrame thành CSV để tải xuống
   csv_data = df_results.to_csv(index=False).encode("utf-8")
 
   st.download_button(
