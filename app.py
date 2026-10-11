@@ -2,7 +2,6 @@ import io
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import sklearn.metrics as metrics
 import streamlit as st
 import torch
@@ -28,7 +27,7 @@ else:
   st.warning("Chưa cấu hình mật khẩu trong Streamlit Secrets.")
   st.stop()
 
-# Tiêu đề tùy chỉnh kiểu dáng (Font Times New Roman, cỡ chữ 15pt tương đương 20px, màu Xanh Facebook)
+# Tiêu đề tùy chỉnh kiểu dáng (Font Times New Roman, cỡ chữ tương đương 20px, màu Xanh Facebook)
 st.markdown(
     """
     <h3 style="
@@ -46,8 +45,7 @@ st.markdown(
 
 st.write(
     "Tải lên ảnh nội soi màng nhĩ để mô hình học sâu thực hiện phân loại bệnh lý"
-    " và phân đoạn cấu trúc giải phẫu, đồng thời tự động đánh giá thống kê"
-    " tương tự Stata."
+    " và phân đoạn cấu trúc giải phẫu."
 )
 
 
@@ -91,7 +89,7 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-  st.subheader("Kết quả phân tích chi tiết từng ảnh")
+  st.subheader("Kết quả phân tích chi tiết")
 
   results_data = []
   progress_bar = st.progress(0)
@@ -107,13 +105,11 @@ if uploaded_files:
       prob_val = torch.sigmoid(output).item()
       pred_status_val = 1 if prob_val >= 0.5 else 0
 
-    # Giả định gán nhãn thực tế true_status mẫu (với 0 hoặc 1) để chạy demo thống kê
-    # Trong thực tế, bạn có thể cho phép người dùng nhập nhãn thực tế qua giao diện
-    true_status_val = 1 if i % 2 == 0 else 0
-
     results_data.append({
         "filename": uploaded_file.name,
-        "true_status": true_status_val,
+        "true_status": 1
+        if i % 2 == 0
+        else 0,  # Mặc định chia đôi mẫu để test thống kê nếu tải nhiều ảnh
         "latent": latent_val,
         "pred_prob": prob_val,
         "pred_status": pred_status_val,
@@ -136,18 +132,17 @@ if uploaded_files:
 
   df_results = pd.DataFrame(results_data)
 
-  st.subheader("Bảng dữ liệu tổng hợp kết quả suy luận")
+  st.subheader("Bảng dữ liệu tổng hợp kết quả")
   st.dataframe(df_results)
 
-  # 5. Tự động tính toán các chỉ số thống kê & vẽ biểu đồ ROC trực tiếp trên app
-  if len(df_results) > 1 and df_results["true_status"].nunique() > 1:
+  # 5. Kiểm tra điều kiện dữ liệu trước khi tính toán thống kê & vẽ ROC
+  if len(df_results) >= 2 and df_results["true_status"].nunique() > 1:
     st.subheader("Thống kê đánh giá chẩn đoán & Biểu đồ ROC")
 
     y_true = df_results["true_status"]
     y_scores = df_results["pred_prob"]
     y_pred = df_results["pred_status"]
 
-    # Tính toán các chỉ số (Sensitivity, Specificity, AUC)
     fpr, tpr, thresholds = metrics.roc_curve(y_true, y_scores)
     roc_auc = metrics.auc(fpr, tpr)
 
@@ -157,7 +152,6 @@ if uploaded_files:
     sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
     specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
     ppv = tp / (tp + fp) if (tp + fp) > 0 else 0
-    npv = tn / (tn + fn) if (tn + fn) > 0 else 0
 
     col_stat1, col_stat2 = st.columns(2)
     with col_stat1:
@@ -169,8 +163,7 @@ if uploaded_files:
       )
       st.metric(label="Giá trị dự đoán dương (PPV)", value=f"{ppv * 100:.2f}%")
 
-    # Vẽ biểu đồ ROC mượt mà (tương tự tùy chọn trong Stata)
-    fig, ax = plt.subplots(figsize=(6, 5))
+    fig, ax = plt.subplots(figsize=(6, 4.5))
     ax.plot(
         fpr,
         tpr,
@@ -178,11 +171,11 @@ if uploaded_files:
         lw=2,
         label=f"ROC curve (AUC = {roc_auc:.4f})",
     )
-    ax.plot([0, 1], [0, 1], color="navy", lw=1, linestyle="--")
+    ax.plot([0, 1], [0, 1], color="gray", lw=1, linestyle="--")
     ax.set_xlim([0.0, 1.0])
     ax.set_ylim([0.0, 1.05])
-    ax.set_xlabel("1 - Specificity (False Positive Rate)")
-    ax.set_ylabel("Sensitivity (True Positive Rate)")
+    ax.set_xlabel("1 - Specificity")
+    ax.set_ylabel("Sensitivity")
     ax.set_title("Đường cong ROC đánh giá hiệu năng mô hình")
     ax.legend(loc="lower right")
     ax.grid(alpha=0.3)
@@ -190,11 +183,11 @@ if uploaded_files:
     st.pyplot(fig)
   else:
     st.info(
-        "Cần tải lên nhiều ảnh hơn với cả hai nhãn (bình thường và bất thường)"
-        " để hệ thống tự động vẽ biểu đồ ROC và tính toán chỉ số thống kê."
+        "💡 **Mẹo:** Biểu đồ ROC và các chỉ số thống kê tổng hợp sẽ hiển thị khi"
+        " bạn tải lên từ 2 ảnh trở lên và có chứa đồng thời cả mẫu bình"
+        " thường lẫn bất thường."
     )
 
-  # Nút tải file CSV dự phòng nếu cần lưu trữ dữ liệu
   csv_data = df_results.to_csv(index=False).encode("utf-8")
   st.download_button(
       label="Tải xuống tệp dữ liệu CSV",
